@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta name="api-base" content="http://localhost:3000" />
+
     <title>typewrite</title>
     <script src="/lib/p5.js"></script>
     <script src="/lib/p5.sound.min.js"></script>
@@ -21,6 +24,26 @@
     <script src="/midiManager.js"></script>
     <script src="/nanoKontrol2Manager.js"></script>
 
+    <script type="module" src="/auth.js"></script>
+
+    <!-- Login UI overlay -->
+    <div id="login-overlay" style="position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.8); z-index:1000;">
+        <form id="login-form" style="background:#111; color:#eee; padding:20px; border-radius:8px; width:min(90vw, 360px); box-shadow:0 4px 20px rgba(0,0,0,0.5);">
+            <h2 style="margin:0 0 12px 0; font-size:20px;">Login</h2>
+            <label style="display:block; margin-bottom:8px;">
+                <span style="display:block; font-size:12px; color:#bbb; margin-bottom:4px;">User ID</span>
+                <input id="login-id" type="text" autocomplete="username" required style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid #333; background:#000; color:#eee;" />
+            </label>
+            <label style="display:block; margin-bottom:12px;">
+                <span style="display:block; font-size:12px; color:#bbb; margin-bottom:4px;">Password</span>
+                <input id="login-password" type="password" autocomplete="current-password" required style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid #333; background:#000; color:#eee;" />
+            </label>
+            <button id="login-submit" type="submit" style="width:100%; padding:10px 12px; border:0; border-radius:6px; background:#4a90e2; color:#fff; font-weight:600; cursor:pointer;">Sign in</button>
+            <div id="login-status" aria-live="polite" style="min-height:18px; margin-top:10px; font-size:12px; color:#aaa;"></div>
+        </form>
+    </div>
+
+    <script type="module" src="/loginUI.js"></script>
     <script src="/main.js"></script>
 </body>
 </html>

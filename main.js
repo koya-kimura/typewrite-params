@@ -252,11 +252,47 @@ function setup() {
     textAnimator.resetAnimation();
 }
 
+let wasRecPressed = false
+
 function draw() {
     // MIDI接続が成功しているかどうかをチェック
     if (nanoKontrol2Manager.midiSuccess_) {
         // 成功している場合は通常のアニメーションを描画
         textAnimator.draw(nanoKontrol2Manager);
+
+        const isRecPressedThisFrame = nanoKontrol2Manager.transportButtonState_["REC"]
+        if (isRecPressedThisFrame && !wasRecPressed){
+            const currentParams = textAnimator.getParams(nanoKontrol2Manager)
+
+            // post art parameters here
+            ;(async () => {
+                const session = window.Auth && window.Auth.getSession && window.Auth.getSession();
+                if (!session || !session.user || !session.user.id) {
+                    console.warn('Not logged in. Please sign in from the overlay before posting.');
+                    return;
+                }
+
+                const body = {
+                    user_id: session.user.id,
+                    name: `preset-${new Date().toISOString().replace(/[:.]/g, '-')}`,
+                    // Send as versioned wrapper for forward compatibility; backend unwraps to store
+                    parameters: { version: 1, data: currentParams }
+                    // thumbnail_base64: optionally attach a canvas snapshot using Auth.toBase64FromCanvas
+                };
+
+                try {
+                    const res = await window.Auth.postArt(body);
+                    console.log('Posted art parameters:', res);
+                } catch (e) {
+                    console.error('Failed to post art parameters:', e);
+                }
+            })();
+
+
+            wasRecPressed = true
+        } else if ( !isRecPressedThisFrame ){
+            wasRecPressed = false
+        }
     } else {
         // 失敗している場合は背景を赤にして警告を表示
         background(255, 0, 0);
