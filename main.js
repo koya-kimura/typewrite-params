@@ -33,6 +33,9 @@ class TextAnimator {
         this.g = 0.5; // 落下時の重力加速度
         this.RESTART_DELAY = 120; // 落下後のリスタート待機時間 (フレーム数)
 
+        // リスタート待機フェーズの開始フレーム
+        this.turnStartTime = 0;
+
         // コンストラクタで文字の初期状態を一度だけ設定
         this.setupCharacters();
     }
@@ -93,6 +96,8 @@ class TextAnimator {
             char.visible = false;
             char.vy = 0;
         });
+
+        this.turnStartTime = frameCount;
     }
 
     /**
@@ -214,10 +219,11 @@ class TextAnimator {
         pop();
 
         // 画面下部にタイトルと著者名を表示
+        const alpha = map(min(frameCount - this.turnStartTime, 200), 0, 200, 0, 255);
         push();
         textAlign(RIGHT, BOTTOM);
         textSize(min(width, height) * 0.03);
-        fill(130);
+        fill(130, alpha);
         text(`${this.title} - ${this.author}`, width - 20, height - 20);
         pop();
 
@@ -234,7 +240,7 @@ class TextAnimator {
             }
         } else if (this.animationPhase === 'PHASE_FALLING') {
             // 全ての文字が画面外に落ちたら次のフェーズへ
-            if (this.characters.every(char => char.currentY > height / 2 + 100)) {
+            if (this.characters.every(char => char.currentY > height)) {
                 this.animationPhase = 'PHASE_RESTARTING';
                 this.restartStartTime = frameCount;
             }
