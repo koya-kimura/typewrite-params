@@ -4,6 +4,8 @@ let poems;
 let nanoKontrol2Manager;
 let textAnimator;
 
+const PARAMETER_SET_VERSION = 1
+
 /**
  * テキストアニメーションを描画・管理するクラス
  * タイプライター、待機、落下、リスタートの各フェーズを状態管理します。
@@ -281,7 +283,10 @@ function draw() {
 
         const isRecPressedThisFrame = nanoKontrol2Manager.transportButtonState_["REC"]
         if (isRecPressedThisFrame && !wasRecPressed){
-            const currentParams = textAnimator.getParams(nanoKontrol2Manager)
+            const currentParams = {
+                version: PARAMETER_SET_VERSION,
+                data: textAnimator.getParams(nanoKontrol2Manager)
+            }
 
             // post art parameters here
             ;(async () => {
