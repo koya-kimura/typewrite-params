@@ -13,6 +13,8 @@ class TextAnimator {
         this.poems = poems;
         this.poemIndex = 0;
         this.poem = poems[this.poemIndex]["phrases"];
+        this.author = poems[this.poemIndex]["author"];
+        this.title = poems[this.poemIndex]["title"];
 
         this.font = font;
         this.maxPhraseLength = Math.max(...this.poem.map(s => s.length));
@@ -77,6 +79,8 @@ class TextAnimator {
         this.poemIndex = (this.poemIndex + 1) % Object.keys(this.poems).length;
         this.poem = this.poems[this.poemIndex]["phrases"];
         this.maxPhraseLength = Math.max(...this.poem.map(s => s.length));
+        this.author = this.poems[this.poemIndex]["author"];
+        this.title = this.poems[this.poemIndex]["title"];
 
         this.characters = [];
         this.setupCharacters();
@@ -207,6 +211,14 @@ class TextAnimator {
                 pop();
             }
         }
+        pop();
+
+        // 画面下部にタイトルと著者名を表示
+        push();
+        textAlign(RIGHT, BOTTOM);
+        textSize(min(width, height) * 0.03);
+        fill(130);
+        text(`${this.title} - ${this.author}`, width - 20, height - 20);
         pop();
 
         // アニメーションの状態遷移ロジック
