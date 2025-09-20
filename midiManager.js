@@ -1,6 +1,6 @@
 /**
  * MIDIデバイスの管理を行う汎用的な基底クラス
- * MIDIアクセス、入出力の初期化、メッセージの基本的な処理を担当します。
+ * Web MIDI APIを使用して、MIDIアクセス、入出力の初期化、メッセージの基本的な処理を担当します。
  */
 class MidiManager {
     /**
@@ -16,7 +16,7 @@ class MidiManager {
 
     /**
      * MIDIデバイスの初期化を行うメソッド
-     * Web MIDI APIを使用してMIDIアクセスをリクエストします。
+     * ブラウザがWeb MIDI APIをサポートしているか確認し、MIDIアクセスをリクエストします。
      */
     initializeMIDIDevices() {
         if (navigator.requestMIDIAccess) {
@@ -32,6 +32,7 @@ class MidiManager {
 
     /**
      * MIDI接続成功時のコールバック
+     * 接続された入力・出力デバイスをプロパティに保存し、メッセージハンドラを設定します。
      * @param {MIDIAccess} midiAccess - MIDIAccessインターフェースのインスタンス
      */
     onMIDISuccess(midiAccess) {
@@ -44,20 +45,22 @@ class MidiManager {
             return;
         }
 
-        this.midiInput_ = inputs[0]; // 最初の入力ポートを使用
+        // 最初の入力ポートと出力ポートを使用
+        this.midiInput_ = inputs[0];
         this.midiOutput_ = outputs.length > 0 ? outputs[0] : null;
 
         console.log("MIDI device ready!");
         console.log("Input:", this.midiInput_ ? this.midiInput_.name : "Not found");
         console.log("Output:", this.midiOutput_ ? this.midiOutput_.name : "Not found");
 
-        // MIDIメッセージ受信時のハンドラを設定
+        // MIDIメッセージ受信時のハンドラを、継承クラスのメソッドに設定
         this.midiInput_.onmidimessage = this.onMIDIMessage.bind(this);
         this.midiSuccess_ = true;
     }
 
     /**
      * MIDI接続失敗時のコールバック
+     * エラーメッセージをログに出力し、接続状態を更新します。
      * @param {string} msg - エラーメッセージ
      */
     onMIDIFailure(msg) {
@@ -67,7 +70,7 @@ class MidiManager {
 
     /**
      * MIDIメッセージ受信時のハンドラ
-     * 継承したクラスでオーバーライドすることを前提とします。
+     * 継承したクラスで具体的なメッセージ処理ロジックを実装することを前提とします。
      * @param {MIDIMessageEvent} event - MIDIメッセージイベント
      */
     onMIDIMessage(event) {
