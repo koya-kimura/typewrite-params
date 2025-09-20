@@ -1,28 +1,23 @@
 // グローバル変数
 let font;
+let poems;
 let nanoKontrol2Manager;
 let textAnimator;
-
-// 表示するテキストデータ
-const phrases = [
-    "静かな夜に、星々がゆっくりと瞬き始める。",
-    "遠い森のざわめきが、そっと風に乗って届く。",
-    "過去の記憶が、光の粒となって空に舞い上がる。",
-    "未知への旅が、小さな一歩から始まるのだ。",
-    "私たちは、見えない絆で深く結ばれている。",
-    "この世界のすべては、絶えず変化し続けている。",
-    "未来は、私たちの手によって描かれる一つの物語。",
-];
 
 /**
  * テキストアニメーションを描画・管理するクラス
  * タイプライター、待機、落下、リスタートの各フェーズを状態管理します。
  */
 class TextAnimator {
-    constructor(phrases, font) {
-        this.phrases = phrases;
+    constructor(font, poems) {
+        this.poems = poems;
+        this.poemIndex = 0;
+        this.poem = poems[this.poemIndex]["phrases"];
+        this.author = poems[this.poemIndex]["author"];
+        this.title = poems[this.poemIndex]["title"];
+
         this.font = font;
-        this.maxPhraseLength = Math.max(...phrases.map(s => s.length));
+        this.maxPhraseLength = Math.max(...this.poem.map(s => s.length));
         this.backgroundColor = 255;
         this.foregroundColor = 0;
 
@@ -81,6 +76,14 @@ class TextAnimator {
      * アニメーションをリセットし、最初の状態に戻す
      */
     resetAnimation() {
+        this.poemIndex = (this.poemIndex + 1) % Object.keys(this.poems).length;
+        this.poem = this.poems[this.poemIndex]["phrases"];
+        this.maxPhraseLength = Math.max(...this.poem.map(s => s.length));
+        this.author = this.poems[this.poemIndex]["author"];
+        this.title = this.poems[this.poemIndex]["title"];
+
+        this.characters = [];
+        this.setupCharacters();
         this.animationPhase = 'PHASE_TYPING';
         this.animationTime = 0;
         this.waitingStartTime = 0;
@@ -97,8 +100,8 @@ class TextAnimator {
      */
     setupCharacters() {
         let characterIndex = 0;
-        for (let i = 0; i < this.phrases.length; i++) {
-            const charArray = [...this.phrases[i]];
+        for (let i = 0; i < this.poem.length; i++) {
+            const charArray = [...this.poem[i]];
             for (let j = 0; j < charArray.length; j++) {
                 this.characters.push({
                     char: charArray[j], // 文字自体
@@ -143,7 +146,7 @@ class TextAnimator {
         randomSeed(noiseSeedValue);
 
         // リアルタイムパラメータに基づいて行数と高さを計算
-        const numRows = floor(map(params.rowsRatio, 0, 1, this.phrases.length, 1));
+        const numRows = floor(map(params.rowsRatio, 0, 1, this.poem.length, 1));
         const rowHeight = height / numRows;
         const charSize = width / this.maxPhraseLength;
 
@@ -210,9 +213,17 @@ class TextAnimator {
         }
         pop();
 
+        // 画面下部にタイトルと著者名を表示
+        push();
+        textAlign(RIGHT, BOTTOM);
+        textSize(min(width, height) * 0.03);
+        fill(130);
+        text(`${this.title} - ${this.author}`, width - 20, height - 20);
+        pop();
+
         // アニメーションの状態遷移ロジック
         if (this.animationPhase === 'PHASE_TYPING') {
-            this.animationTime += map(params.animationSpeed, 0, 1, 0.1, 0.5);
+            this.animationTime += map(params.animationSpeed, 0, 1, 0.1, 0.5) + map(noise(frameCount * 0.01), 0, 1, -0.05, 0.05);
             if (this.animationTime >= this.characters.length) {
                 this.animationPhase = 'PHASE_WAITING';
                 this.waitingStartTime = frameCount;
@@ -239,16 +250,18 @@ class TextAnimator {
 // p5.jsのライフサイクル関数
 function preload() {
     font = loadFont("asset/M-NijimiMincho.otf");
+    poems = loadJSON("asset/poems.json");
 }
 
 function setup() {
     createCanvas(windowWidth, windowHeight);
     textFont(font);
+    noCursor();
 
     nanoKontrol2Manager = new NanoKontrol2Manager();
     nanoKontrol2Manager.initializeMIDIDevices();
 
-    textAnimator = new TextAnimator(phrases, font);
+    textAnimator = new TextAnimator(font, poems);
     textAnimator.resetAnimation();
 }
 
