@@ -29,12 +29,15 @@ class TextAnimator {
         this.restartStartTime = 0; // リスタート待機フェーズの開始フレーム
 
         // アニメーションのパラメータ
-        this.WAITING_DURATION = 180; // 文字表示後の待機時間 (フレーム数)
+        this.WAITING_DURATION = 120; // 文字表示後の待機時間 (フレーム数)
         this.g = 0.5; // 落下時の重力加速度
         this.RESTART_DELAY = 120; // 落下後のリスタート待機時間 (フレーム数)
 
         // リスタート待機フェーズの開始フレーム
         this.turnStartTime = 0;
+
+        this.preLeftState = false;
+        this.preRightState = false;
 
         // コンストラクタで文字の初期状態を一度だけ設定
         this.setupCharacters();
@@ -56,6 +59,7 @@ class TextAnimator {
                 textScale: midiController.faderValues_[5],
                 animationSpeed: midiController.faderValues_[6],
                 randomSeedValue: midiController.faderValues_[7],
+                poemIndex: this.poemIndex,
                 showBackgroundBox: midiController.transportButtonToggleState_['MARKER_LEFT'],
                 colorInverted: midiController.transportButtonToggleState_['MARKER_RIGHT']
             };
@@ -69,6 +73,7 @@ class TextAnimator {
                 angleScale: 0,
                 animationSpeed: 0.5,
                 randomSeedValue: 0.5,
+                poemIndex: this.poemIndex,
                 showBackgroundBox: false,
                 colorInverted: false
             };
@@ -79,7 +84,10 @@ class TextAnimator {
      * アニメーションをリセットし、最初の状態に戻す
      */
     resetAnimation() {
-        this.poemIndex = (this.poemIndex + 1) % Object.keys(this.poems).length;
+        const N = Object.keys(this.poems).length;
+        if (this.poemIndex < 0) this.poemIndex += N;
+        this.poemIndex = this.poemIndex % N;
+        
         this.poem = this.poems[this.poemIndex]["phrases"];
         this.maxPhraseLength = Math.max(...this.poem.map(s => s.length));
         this.author = this.poems[this.poemIndex]["author"];
@@ -98,6 +106,17 @@ class TextAnimator {
         });
 
         this.turnStartTime = frameCount;
+    }
+
+    indexChange(){
+        const preIndex = this.poemIndex;
+        if(nanoKontrol2Manager.midiSuccess_ && (this.preLeftState !== nanoKontrol2Manager.transportButtonState_['TRACK_LEFT'] || this.preRightState !== nanoKontrol2Manager.transportButtonState_['TRACK_RIGHT'])){
+            this.poemIndex += nanoKontrol2Manager.transportButtonState_['TRACK_RIGHT'] ? 1 : 0;
+            this.poemIndex -= nanoKontrol2Manager.transportButtonState_['TRACK_LEFT'] ? 1 : 0;
+        }
+        this.preLeftState = nanoKontrol2Manager.transportButtonState_['TRACK_LEFT'];
+        this.preRightState = nanoKontrol2Manager.transportButtonState_['TRACK_RIGHT'];
+        return this.poemIndex !== preIndex;
     }
 
     /**
@@ -134,12 +153,12 @@ class TextAnimator {
      * @param {NanoKontrol2Manager} midiController - コントローラーのインスタンス
      */
     draw(midiController) {
-        const params = this.getParams(midiController);
-
         // PLAYボタンが押されたらアニメーションをリセット
-        if (midiController.midiSuccess_ && midiController.transportButtonState_['PLAY']) {
+        if (midiController.midiSuccess_ && (midiController.transportButtonState_['PLAY'] || this.indexChange())) {
             this.resetAnimation();
         }
+
+        const params = this.getParams(midiController);
 
         // 背景とフォアグラウンドカラーを決定
         const bgColor = params.colorInverted ? this.foregroundColor : this.backgroundColor;
