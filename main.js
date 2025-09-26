@@ -157,6 +157,11 @@ class TextAnimator {
         if (midiController.midiSuccess_ && (midiController.transportButtonState_['PLAY'] || this.indexChange())) {
             this.resetAnimation();
         }
+        // 1分くらいでリセットかけとく
+        if(frameCount % 3600 == 0){
+            this.poemIndex += 1;
+            this.resetAnimation();
+        }
 
         const params = this.getParams(midiController);
 
