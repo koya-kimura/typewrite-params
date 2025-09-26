@@ -4,6 +4,547 @@ let poems;
 let nanoKontrol2Manager;
 let textAnimator;
 
+const API_BASE_URL = (typeof window !== 'undefined' && window.__TYPEWRITE_PARAMS_API_BASE__) || 'http://localhost:3000';
+const SESSION_STORAGE_KEY = (typeof window !== 'undefined' && window.__TYPEWRITE_PARAMS_SESSION_KEY__) || 'flowVol8Session';
+const PARAMETER_VERSION = 3;
+const PARAMETER_PROFILE = 'nanokontrol2-v1';
+
+const LOGIN_MODAL_BACKDROP_ID = 'typewrite-login-backdrop';
+const LOGIN_MODAL_FORM_ID = 'typewrite-login-form';
+const LOGIN_MODAL_CLASS_PREFIX = 'typewrite-login';
+
+let currentSession = null;
+let loginModalElements = null;
+let isLoginStorageListenerAttached = false;
+
+let isParameterSubmissionInFlight = false;
+
+function resolveSessionTokens() {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    const candidates = [];
+
+    if (window.__TYPEWRITE_PARAMS_SESSION__) {
+        candidates.push(window.__TYPEWRITE_PARAMS_SESSION__);
+    }
+
+    const storages = [window.localStorage, window.sessionStorage];
+    for (const storage of storages) {
+        if (!storage) continue;
+        try {
+            const raw = storage.getItem(SESSION_STORAGE_KEY);
+            if (!raw) continue;
+            try {
+                candidates.push(JSON.parse(raw));
+            } catch (error) {
+                console.error('[typewrite-params] セッション情報のJSON解析に失敗しました:', error);
+            }
+        } catch (error) {
+            console.warn('[typewrite-params] ストレージへアクセスできませんでした:', error);
+        }
+    }
+
+    if (candidates.length === 0) {
+        currentSession = null;
+        return null;
+    }
+
+    const resolved = candidates.find(candidate => candidate && (candidate.token || candidate.bearerToken)) || candidates[0];
+    setCurrentSession(resolved, { persist: false });
+    return currentSession;
+}
+
+async function submitParameters(params, metadata = {}) {
+    const session = currentSession || resolveSessionTokens();
+    const token = session?.token ?? session?.bearerToken ?? session?.authToken ?? null;
+    const csrf = session?.csrf ?? session?.csrfToken ?? session?.csrf_token ?? null;
+    const baseUrl = (session?.baseUrl ?? API_BASE_URL).replace(/\/$/, '');
+
+    if (!token || !csrf) {
+        console.warn('[typewrite-params] パラメーター送信をスキップしました: 認証トークンまたはCSRFトークンが見つかりません。');
+        showLoginModal();
+        return;
+    }
+
+    const headers = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'x-csrf-token': csrf,
+    };
+
+    const payloadData = { ...params, ...metadata };
+    if (!payloadData.submittedAt) {
+        payloadData.submittedAt = new Date().toISOString();
+    }
+
+    const body = {
+        parameters: {
+            version: session?.parameterVersion ?? PARAMETER_VERSION,
+            profile: session?.parameterProfile ?? PARAMETER_PROFILE,
+            data: payloadData,
+        },
+    };
+
+    const endpoint = `${baseUrl}/api/art`;
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+    });
+
+    const responseText = await response.text();
+    let responseJson = null;
+    if (responseText) {
+        try {
+            responseJson = JSON.parse(responseText);
+        } catch (error) {
+            console.warn('[typewrite-params] レスポンスのJSON解析に失敗しました:', error, responseText);
+        }
+    }
+
+    if (!response.ok) {
+        const message = responseJson?.message || response.statusText;
+        throw new Error(`パラメーター送信に失敗しました: ${message}`);
+    }
+
+    console.info('[typewrite-params] パラメーター送信に成功しました:', responseJson);
+    return responseJson;
+}
+
+function triggerParameterSubmission(params, metadata = {}) {
+    if (isParameterSubmissionInFlight) {
+        console.warn('[typewrite-params] パラメーター送信は既に実行中のためスキップしました。');
+        return;
+    }
+
+    isParameterSubmissionInFlight = true;
+    submitParameters(params, metadata)
+        .catch(error => {
+            console.error('[typewrite-params] パラメーター送信時にエラーが発生しました:', error);
+        })
+        .finally(() => {
+            isParameterSubmissionInFlight = false;
+        });
+}
+
+function setCurrentSession(session, { persist = true } = {}) {
+    if (session) {
+        session = {
+            parameterVersion: PARAMETER_VERSION,
+            parameterProfile: PARAMETER_PROFILE,
+            baseUrl: API_BASE_URL,
+            ...session,
+        };
+        if (!session.baseUrl) {
+            session.baseUrl = API_BASE_URL;
+        }
+        session.baseUrl = session.baseUrl.replace(/\/$/, '');
+    }
+
+    currentSession = session || null;
+
+    if (typeof window !== 'undefined') {
+        if (session) {
+            window.__TYPEWRITE_PARAMS_SESSION__ = session;
+        } else {
+            delete window.__TYPEWRITE_PARAMS_SESSION__;
+        }
+
+        const storages = [window.localStorage, window.sessionStorage];
+        for (const storage of storages) {
+            if (!storage) continue;
+            try {
+                if (session && persist) {
+                    storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+                } else if (!session) {
+                    storage.removeItem(SESSION_STORAGE_KEY);
+                }
+            } catch (error) {
+                console.warn('[typewrite-params] セッション情報の永続化に失敗しました:', error);
+            }
+        }
+    }
+
+    updateLoginModalVisibility();
+}
+
+function ensureLoginModalElements() {
+    if (loginModalElements || typeof document === 'undefined') {
+        return loginModalElements;
+    }
+
+    injectLoginModalStyles();
+
+    let backdrop = document.getElementById(LOGIN_MODAL_BACKDROP_ID);
+    if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.id = LOGIN_MODAL_BACKDROP_ID;
+        backdrop.className = `${LOGIN_MODAL_CLASS_PREFIX}__backdrop`;
+        backdrop.style.display = 'none';
+        document.body.appendChild(backdrop);
+    }
+
+    const modal = document.createElement('div');
+    modal.className = `${LOGIN_MODAL_CLASS_PREFIX}__modal`;
+
+    const title = document.createElement('h2');
+    title.textContent = 'ログインが必要です';
+    modal.appendChild(title);
+
+    const description = document.createElement('p');
+    description.textContent = 'Flow Vol8 backend へログインし、パラメーターを保存できる状態にしてください。';
+    modal.appendChild(description);
+
+    const form = document.createElement('form');
+    form.id = LOGIN_MODAL_FORM_ID;
+    form.className = `${LOGIN_MODAL_CLASS_PREFIX}__form`;
+
+    const baseUrlLabel = document.createElement('label');
+    baseUrlLabel.className = `${LOGIN_MODAL_CLASS_PREFIX}__label`;
+    baseUrlLabel.textContent = 'APIベースURL';
+    const baseUrlInput = document.createElement('input');
+    baseUrlInput.type = 'url';
+    baseUrlInput.required = true;
+    baseUrlInput.name = 'baseUrl';
+    baseUrlInput.placeholder = 'http://localhost:3000';
+    baseUrlInput.value = (typeof window !== 'undefined' && (currentSession?.baseUrl || window.__TYPEWRITE_PARAMS_API_BASE__)) || API_BASE_URL;
+    baseUrlInput.className = `${LOGIN_MODAL_CLASS_PREFIX}__input`;
+    baseUrlLabel.appendChild(baseUrlInput);
+    form.appendChild(baseUrlLabel);
+
+    const userIdLabel = document.createElement('label');
+    userIdLabel.className = `${LOGIN_MODAL_CLASS_PREFIX}__label`;
+    userIdLabel.textContent = 'ユーザーID';
+    const userIdInput = document.createElement('input');
+    userIdInput.type = 'text';
+    userIdInput.name = 'userId';
+    userIdInput.required = true;
+    userIdInput.autocomplete = 'username';
+    userIdInput.className = `${LOGIN_MODAL_CLASS_PREFIX}__input`;
+    userIdLabel.appendChild(userIdInput);
+    form.appendChild(userIdLabel);
+
+    const passwordLabel = document.createElement('label');
+    passwordLabel.className = `${LOGIN_MODAL_CLASS_PREFIX}__label`;
+    passwordLabel.textContent = 'パスワード';
+    const passwordInput = document.createElement('input');
+    passwordInput.type = 'password';
+    passwordInput.name = 'password';
+    passwordInput.required = true;
+    passwordInput.autocomplete = 'current-password';
+    passwordInput.className = `${LOGIN_MODAL_CLASS_PREFIX}__input`;
+    passwordLabel.appendChild(passwordInput);
+    form.appendChild(passwordLabel);
+
+    const errorMessage = document.createElement('div');
+    errorMessage.className = `${LOGIN_MODAL_CLASS_PREFIX}__error`;
+    form.appendChild(errorMessage);
+
+    const submitButton = document.createElement('button');
+    submitButton.type = 'submit';
+    submitButton.textContent = 'ログイン';
+    submitButton.className = `${LOGIN_MODAL_CLASS_PREFIX}__submit`;
+    form.appendChild(submitButton);
+
+    modal.appendChild(form);
+    backdrop.appendChild(modal);
+
+    form.addEventListener('submit', event => {
+        event.preventDefault();
+        handleLoginSubmit({ baseUrlInput, userIdInput, passwordInput, errorMessage, submitButton });
+    });
+
+    loginModalElements = {
+        backdrop,
+        modal,
+        form,
+        baseUrlInput,
+        userIdInput,
+        passwordInput,
+        errorMessage,
+        submitButton,
+    };
+
+    return loginModalElements;
+}
+
+function injectLoginModalStyles() {
+    if (typeof document === 'undefined') {
+        return;
+    }
+
+    const styleId = `${LOGIN_MODAL_CLASS_PREFIX}__style`;
+    if (document.getElementById(styleId)) {
+        return;
+    }
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+        .${LOGIN_MODAL_CLASS_PREFIX}__backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__modal {
+            background: #111;
+            color: #f5f5f5;
+            padding: 32px;
+            border-radius: 16px;
+            width: min(420px, 85vw);
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__modal h2 {
+            margin: 0 0 12px;
+            font-size: 1.5rem;
+            text-align: center;
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__modal p {
+            margin: 0 0 20px;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            color: #d0d0d0;
+            text-align: center;
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__form {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__label {
+            display: flex;
+            flex-direction: column;
+            font-size: 0.85rem;
+            gap: 6px;
+            color: #cfd2ff;
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__input {
+            padding: 10px 12px;
+            font-size: 1rem;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(20, 20, 30, 0.95);
+            color: #f5f5f5;
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__input:focus {
+            outline: none;
+            border-color: #8c9eff;
+            box-shadow: 0 0 0 2px rgba(140, 158, 255, 0.25);
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__submit {
+            padding: 12px;
+            margin-top: 8px;
+            font-size: 1rem;
+            font-weight: bold;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            background: linear-gradient(135deg, #6c63ff, #8c54ff);
+            color: #fff;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__submit:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(108, 99, 255, 0.4);
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__submit:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .${LOGIN_MODAL_CLASS_PREFIX}__error {
+            min-height: 1.25rem;
+            font-size: 0.88rem;
+            color: #ff8a80;
+            text-align: center;
+        }
+    `;
+
+    document.head.appendChild(style);
+}
+
+async function handleLoginSubmit(elements) {
+    const { baseUrlInput, userIdInput, passwordInput, errorMessage, submitButton } = elements;
+
+    const baseUrl = (baseUrlInput.value || '').trim() || API_BASE_URL;
+    const userId = (userIdInput.value || '').trim();
+    const password = passwordInput.value || '';
+
+    if (!userId || !password) {
+        displayLoginError(errorMessage, 'ユーザーIDとパスワードを入力してください。');
+        return;
+    }
+
+    setLoginFormLoading(true, elements);
+    displayLoginError(errorMessage, '');
+
+    try {
+        const session = await performLogin(baseUrl, userId, password);
+        setCurrentSession(session);
+        setLoginFormLoading(false, elements);
+        passwordInput.value = '';
+        hideLoginModal();
+    } catch (error) {
+        console.error('[typewrite-params] ログインに失敗しました:', error);
+        displayLoginError(errorMessage, error.message || 'ログインに失敗しました。');
+        setLoginFormLoading(false, elements);
+    }
+}
+
+function setLoginFormLoading(isLoading, elements) {
+    const { baseUrlInput, userIdInput, passwordInput, submitButton } = elements;
+    [baseUrlInput, userIdInput, passwordInput, submitButton].forEach(el => {
+        el.disabled = isLoading;
+    });
+    submitButton.textContent = isLoading ? 'ログイン中…' : 'ログイン';
+}
+
+function displayLoginError(element, message) {
+    if (!element) return;
+    element.textContent = message || '';
+}
+
+async function performLogin(baseUrlInput, userId, password) {
+    const normalizedBaseUrl = (baseUrlInput || API_BASE_URL).trim().replace(/\/$/, '') || API_BASE_URL;
+    const endpoint = `${normalizedBaseUrl}/api/login`;
+
+    let response;
+    try {
+        response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            },
+            body: JSON.stringify({ id: userId, password }),
+        });
+    } catch (error) {
+        throw new Error('サーバーへ接続できませんでした。ネットワーク状態を確認してください。');
+    }
+
+    let json;
+    try {
+        json = await response.json();
+    } catch (error) {
+        throw new Error('サーバーから有効なレスポンスを受信できませんでした。');
+    }
+
+    if (!response.ok || json?.success === false) {
+        throw new Error(json?.message || '認証に失敗しました。');
+    }
+
+    const session = {
+        ...json,
+        baseUrl: normalizedBaseUrl,
+        parameterVersion: json?.parameters?.version ?? PARAMETER_VERSION,
+        parameterProfile: json?.parameters?.profile ?? PARAMETER_PROFILE,
+    };
+
+    return session;
+}
+
+function updateLoginModalVisibility() {
+    const elements = ensureLoginModalElements();
+    if (!elements) {
+        return;
+    }
+
+    const hasSession = !!(currentSession && (currentSession.token || currentSession.bearerToken) && (currentSession.csrf || currentSession.csrfToken || currentSession.csrf_token));
+
+    if (hasSession) {
+        hideLoginModal();
+    } else {
+        showLoginModal();
+    }
+}
+
+function showLoginModal() {
+    const elements = ensureLoginModalElements();
+    if (!elements) return;
+
+    elements.backdrop.style.display = 'flex';
+    if (typeof document !== 'undefined') {
+        document.body.style.overflow = 'hidden';
+    }
+
+    displayLoginError(elements.errorMessage, '');
+    if (elements.baseUrlInput) {
+        elements.baseUrlInput.value = (currentSession?.baseUrl || API_BASE_URL).replace(/\/$/, '');
+    }
+    if (elements.userIdInput && !elements.userIdInput.value) {
+        elements.userIdInput.focus();
+    } else if (elements.passwordInput) {
+        elements.passwordInput.focus();
+    }
+}
+
+function hideLoginModal() {
+    if (!loginModalElements) return;
+    loginModalElements.backdrop.style.display = 'none';
+    if (typeof document !== 'undefined') {
+        document.body.style.overflow = '';
+    }
+}
+
+function attachLoginSessionListeners() {
+    if (typeof window === 'undefined' || isLoginStorageListenerAttached) {
+        return;
+    }
+
+    window.addEventListener('storage', event => {
+        if (event.key && event.key !== SESSION_STORAGE_KEY) {
+            return;
+        }
+        resolveSessionTokens();
+        updateLoginModalVisibility();
+    });
+
+    window.addEventListener('focus', () => {
+        resolveSessionTokens();
+        updateLoginModalVisibility();
+    });
+
+    isLoginStorageListenerAttached = true;
+}
+
+function initializeLoginUI() {
+    ensureLoginModalElements();
+    if (!currentSession) {
+        resolveSessionTokens();
+    }
+    attachLoginSessionListeners();
+    updateLoginModalVisibility();
+}
+
+if (typeof window !== 'undefined') {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeLoginUI);
+    } else {
+        initializeLoginUI();
+    }
+}
+
 /**
  * テキストアニメーションを描画・管理するクラス
  * タイプライター、待機、落下、リスタートの各フェーズを状態管理します。
@@ -61,7 +602,7 @@ class TextAnimator {
                 randomSeedValue: midiController.faderValues_[7],
                 poemIndex: this.poemIndex,
                 showBackgroundBox: midiController.transportButtonToggleState_['MARKER_LEFT'],
-                colorInverted: midiController.transportButtonToggleState_['MARKER_RIGHT']
+                colorInverted: midiController.transportButtonToggleState_['MARKER_RIGHT'],
             };
         } else {
             // 接続されていない場合はデフォルト値を使用
@@ -295,11 +836,30 @@ function setup() {
     textAnimator.resetAnimation();
 }
 
+let isSaveBtnPressing = false
+
 function draw() {
     // MIDI接続が成功しているかどうかをチェック
     if (nanoKontrol2Manager.midiSuccess_) {
         // 成功している場合は通常のアニメーションを描画
         textAnimator.draw(nanoKontrol2Manager);
+
+        const currentRecBtnState = nanoKontrol2Manager.transportButtonState_['REC']
+
+        if (!isSaveBtnPressing && currentRecBtnState){
+            const currentParams = textAnimator.getParams(nanoKontrol2Manager);
+
+            // 以下にパラメーター送信処理を記述
+            const metadata = {
+                poemTitle: textAnimator.title,
+                poemAuthor: textAnimator.author,
+            };
+            triggerParameterSubmission(currentParams, metadata);
+
+            isSaveBtnPressing = true
+        } else if (!currentRecBtnState){
+            isSaveBtnPressing = false
+        }
     } else {
         // 失敗している場合は背景を赤にして警告を表示
         background(255, 0, 0);
