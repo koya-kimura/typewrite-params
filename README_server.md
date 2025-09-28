@@ -20,6 +20,8 @@ id INTEGER PRIMARY KEY AUTOINCREMENT
 user_id TEXT NOT NULL
 name TEXT UNIQUE NOT NULL
 parameters_json TEXT NOT NULL
+parameters_version INTEGER NULL
+parameters_profile TEXT NULL
 thumbnail_path TEXT NULL
 created_at TEXT NOT NULL DEFAULT datetime('now')
 updated_at TEXT NOT NULL DEFAULT datetime('now')
@@ -38,9 +40,10 @@ updated_at TEXT NOT NULL DEFAULT datetime('now')
 | Method | Path | Auth | CSRF | Admin | Description |
 |--------|------|------|------|-------|-------------|
 | POST | /api/login | No | No | - | Issue token + csrf |
-| POST | /api/art | Yes | Yes | No | Upsert by `name` (parameters + optional thumbnail) |
+| POST | /api/art | Yes | Yes | No | Create with server-assigned name (parameters + optional thumbnail) |
 | GET | /api/art | No | No | No | List recent (limit clamp 500) |
 | GET | /api/art/:identifier | No | No | No | Lookup by user (latest) else by name |
+| GET | /api/art/id/:id | No | No | No | Fetch single entry by numeric id |
 | DELETE | /api/art/:id | Yes | Yes | Yes | Delete single row |
 | DELETE | /api/art | Yes | Yes | Yes | Delete all rows |
 | GET | /thumbnails/* | No | No | No | Serve stored WebP thumbnails |
@@ -51,9 +54,7 @@ Body:
 
 ```json
 {
-  "user_id": "alice",
-  "name": "preset_name",
-  "parameters": { "floatA": 0.42 },
+  "parameters": { "version": 1, "data": { "floatA": 0.42, "flag": true }, "profile": "p5-v1" },
   "thumbnail_base64": "<base64 PNG or WebP>"
 }
 ```
@@ -64,7 +65,31 @@ Rules:
 - Accepts genuine WebP (RIFF/WEBP signature check) or PNG (signature + MIME).
 - Unsupported => 415.
 
-Response: `{ success, upserted_name, user_id }`.
+Server assigns:
+
+- `user_id` from the login session (or `"anonymous"` where applicable)
+- `name` as a UUID string (e.g., `"550e8400-e29b-41d4-a716-446655440000"`)
+
+Response: `{ success, id, upserted_name, user_id }`.
+
+### Fetch by ID
+
+`GET /api/art/id/123` ->
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 123,
+    "user_id": "alice",
+    "name": "550e8400-e29b-41d4-a716-446655440000",
+    "parameters": { "floatA": 0.42 },
+    "created_at": "2025-09-25 10:11:12",
+    "updated_at": "2025-09-25 10:11:12",
+    "thumbnail_url": "/thumbnails/abc.webp"
+  }
+}
+```
 
 ## Listing
 
@@ -87,66 +112,27 @@ Limit defaults 100, max 500.
 
 ## Parameter Types (Storable Schema)
 
-The `parameters` field currently accepts either:
-
-1. Legacy inline object (original format) matching `parameterSchema`.
-2. Versioned wrapper object: `{ "version": <number>, "data": { ...parameter fields... } }`.
-
-When a versioned wrapper is submitted the backend stores only the unwrapped `data` portion in `parameters_json` for uniform persistence. The outer wrapper is not retained so reads always return the raw parameter object (legacy shape) to avoid breaking existing clients.
-
-### Current Field Definitions
+The `parameters` field is a required versioned wrapper:
 
 ```ts
-// parameterSchema (all fields optional, at least one must be present)
-interface ParametersLegacyShape {
-  floatA?: number;           // arbitrary numeric parameter
-  floatB?: number;           // second numeric parameter
-  vector2?: [number, number];
-  vector3?: [number, number, number];
-  vector4?: [number, number, number, number];
-  color?: [number, number, number, number]; // RGBA each 0..1
-}
-
-// Versioned submission wrapper (write-only convenience)
-interface VersionedParametersV1 {
-  version: 1;                // positive integer version tag
-  data: ParametersLegacyShape;
+interface VersionedParametersSubmission {
+  version: number;            // integer >= 1
+  data: Record<string, unknown>; // non-empty arbitrary JSON object
+  profile?: string;           // optional profile/model tag
 }
 ```
 
 Validation rules:
 
-- At least one field inside the parameter object (`floatA`, `floatB`, `vector2`, `vector3`, `vector4`, `color`) must be supplied.
-- `color` components are clamped via validation to the inclusive range [0,1].
-- Vectors must have the exact tuple arity shown above.
-- Extra/unknown keys in `parameters` are currently allowed (stored verbatim) but may be restricted in a future stricter schema.
-- If both legacy and versioned formats emerge simultaneously (e.g. a client mistakenly nests a legacy object inside another), only the recognized union branch will be parsed; malformed hybrids are rejected with a validation error.
+- `version >= 1`
+- `data` must be a non-empty object
+- Unknown keys inside `data` are accepted and stored verbatim
 
-### Example Submissions
+Backend behavior:
 
-Legacy:
-
-```json
-{ "parameters": { "floatA": 0.5, "vector2": [1, 2] } }
-```
-
-Versioned (preferred going forward for evolvability):
-
-```json
-{ "parameters": { "version": 1, "data": { "floatA": 0.5, "color": [1,0.5,0,1] } } }
-```
-
-### Future Versioning Strategy
-
-Possible evolutions:
-
-- Introduce `version: 2` adding new typed fields (e.g. `matrix3x3`, enumerations) while preserving backward compatibility by continuing to unwrap to a canonical stored object.
-- Maintain a migration layer: if a future version changes semantics (e.g. renaming `floatA`), map to an internal normalized representation before storage.
-- Add explicit `schema` or `profile` identifiers alongside `version` for supporting multiple model families concurrently.
-
-### Rationale
-
-Unwrapping keeps reads simple and prevents legacy clients from needing to handle multiple shapes. The trade‑off is that the original version number is not retained; if auditing of historical schema versions becomes required, we would persist an additional `parameters_version` column in a future migration.
+- Stores unwrapped `data` in `parameters_json`
+- Persists `parameters_version` and `parameters_profile` columns as metadata
+- Reads (list/detail) return unwrapped `parameters` only (version/profile not yet exposed)
 
 ## Session Store
 
@@ -169,7 +155,7 @@ npm run dummy # manual dummy submission (server must run on port 3000)
 
 - CSRF header required for state-changing requests.
 - MIME + signature detection reduces spoofed images.
-- Upsert keyed by `name` (unique) – enables possible multi-preset support later by relaxing uniqueness or adding composite key.
+- Create is keyed by a server-assigned `name` (UUID). A unique index exists on `name`.
 
 ## Future Enhancements (Short List)
 
